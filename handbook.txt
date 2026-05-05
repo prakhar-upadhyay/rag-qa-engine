@@ -1,0 +1,12 @@
+# TechNova Forward Deployment Engineering - Employee Handbook
+
+Welcome to the FDE team. 
+
+**Office Policies:**
+Our main headquarters is located in Noida. Remote work is strictly permitted only on Tuesdays and Thursdays. On Mondays, Wednesdays, and Fridays, all engineers must be on-site. 
+
+**IT & Security:**
+The guest WiFi network is "NovaGuest" and the password is "DeployFaster2026". Never share this with unverified clients. All laptops must be locked using a YubiKey when stepping away from the desk.
+
+**Expense Reports:**
+All travel expenses must be submitted to Uma in the accounting department via the Power Apps portal by the 15th of the month. Meal stipends are capped at $45 per day during client travel.
