@@ -1,30 +1,73 @@
 import os
 from dotenv import load_dotenv
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_community.vectorstores import Pinecone as PineconeVectorStore
+from langchain_classic.chains import create_retrieval_chain
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
+from pinecone import Pinecone
 
-# 1. Load the secret API key from the .env file
+# 1. Secure Authentication
 load_dotenv()
-if not os.environ.get("GEMINI_API_KEY"):
-    raise ValueError("GEMINI_API_KEY missing from .env file!")
+if not os.environ.get("GEMINI_API_KEY") or not os.environ.get("PINECONE_API_KEY"):
+    raise ValueError("Missing API keys in .env file!")
 
-print("Environment secured. Loading data...")
+print("1. Environment secured. Connecting to cloud infrastructure...")
 
-# 2. Load the private document
-loader = TextLoader("handbook.txt")
-document = loader.load()
+# Initialize Cloud Connection
+pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+index_name = "fde-rag-index"
 
-# 3. Chunk the document
-# We split the text into chunks of 200 characters, with a 20-character overlap 
-# so we don't accidentally cut a sentence or concept in half.
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=200, 
-    chunk_overlap=20
+# 2. Connect to Existing Database (NO UPLOADING!)
+print("2. Syncing with existing Pinecone vectors (Skipping embedding phase)...")
+embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+# The Hotwire Method to prevent the TypeError
+active_index = pc.Index(index_name)
+vector_store = PineconeVectorStore(
+    index=active_index, 
+    embedding=embeddings,
+    text_key="text" 
 )
-chunks = text_splitter.split_documents(document)
+retriever = vector_store.as_retriever()
 
-# 4. Verification
-print(f"Success! The document was split into {len(chunks)} chunks.")
-print("-" * 40)
-print("Preview of Chunk #1:")
-print(chunks[0].page_content)
+# 3. The Brain (The Generation Model)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+
+system_prompt = (
+    "You are an assistant for question-answering tasks. "
+    "Use the following pieces of retrieved context to answer the question. "
+    "If you don't know the answer, say that you don't know. "
+    "Use three sentences maximum and keep the answer concise."
+    "\n\n"
+    "{context}"
+)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", "{input}"),
+])
+
+# 4. Assemble the Pipeline
+question_answer_chain = create_stuff_documents_chain(llm, prompt)
+rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+
+print("3. Cloud RAG Pipeline Assembled! \n")
+print("=" * 50)
+print("Welcome to the Cloud-Native Q&A Engine.")
+print("Type 'exit' or 'quit' to close.")
+print("=" * 50)
+
+# 5. Interactive Loop
+while True:
+    user_question = input("\nAsk a question: ")
+    if user_question.lower() in ['exit', 'quit']:
+        break
+    if not user_question.strip():
+        continue
+        
+    print("Querying Pinecone Cloud & Generating Answer...")
+    response = rag_chain.invoke({"input": user_question})
+    
+    print("\n[AI Answer]:")
+    print(response["answer"])

@@ -1,0 +1,43 @@
+**Engineering Architecture Document** 
+
+It traces the complete evolution of the project from a fragile local prototype to a robust, decoupled cloud application.
+
+***
+
+# Architecture History: Cloud-Native Private Data Q&A Engine (RAG)
+
+## 1. The Initial Goal & Perspective
+**The Goal:** Build a Retrieval-Augmented Generation (RAG) pipeline to securely query private text files (initially a small handbook, eventually scaling to a 100MB astrological PDF) using Google's Gemini API and LangChain.
+**Initial Perspective:** Build a localized, vertically integrated script. We attempted to load the text, embed it using a local vector database (ChromaDB), and chat with it all in a single execution loop on a local Windows machine.
+
+## 2. Phase I: The Local Prototype & Dependency Hell
+**The Problem:** The local C++ compilation crash. ChromaDB relies on a heavy C++ backend (`hnswlib`). Because the host machine lacked specific Microsoft C++ Build Tools, the database violently crashed without throwing a Python error (Segmentation Fault). 
+**The FDE Pivot:** Instead of spending hours configuring the host machine's C++ compilers, we "hot-swapped" the architecture. We stripped out ChromaDB and replaced it with LangChain’s pure-Python `InMemoryVectorStore`. 
+**The Win:** This allowed us to successfully prove the embedding logic and the Chat API logic worked, achieving a rapid prototype win.
+
+## 3. Phase II: The Enterprise Pivot (Cloud Migration)
+**The Problem:** An in-memory database cannot scale to a 100MB PDF, and it doesn't carry the weight of an "industry standard" tool on a resume.
+**The FDE Pivot:** We shifted our perspective from a "Local Architecture" to a "Cloud-Native Architecture." We replaced the local memory store with **Pinecone**, a managed cloud vector database. To handle the massive file size, we implemented an ETL (Extract, Transform, Load) strategy: extracting the PDF to raw `.txt` and artificially capping the chunk load to 100 to protect the API quota.
+
+## 4. Phase III: Navigating API Drift & Package Conflicts
+Transitioning to the cloud exposed us to severe upstream open-source conflicts:
+* **The Ghost Package:** Pinecone rebranded their Python package from `pinecone-client` to `pinecone`. We had to manually purge the old package from the host system to prevent import errors.
+* **The Numpy Conflict:** The specific `langchain-pinecone` wrapper demanded an ancient version of `numpy`, which again triggered a fatal C++ compilation error. We bypassed this by dropping the broken wrapper and using the stable `langchain-community` integration instead.
+* **LangChain Validation Bug:** The new Pinecone SDK changed how it lists active databases, which completely broke LangChain's internal validation check, throwing an `AttributeError`.
+* **The Hotwire Solution:** We bypassed LangChain’s broken validation by instantiating the raw Pinecone Index object using the modern SDK and forcefully injecting it into the LangChain wrapper.
+
+## 5. Phase IV: The Dimensionality Mismatch (Infrastructure-as-Code)
+**The Problem:** A mathematical mismatch (`Vector dimension 3072 does not match the index 768`). We upgraded the embedding model to the modern `gemini-embedding-001`, which outputs incredibly dense 3072-dimension vectors. However, the Pinecone cloud bucket was manually configured to accept 768 dimensions. Furthermore, Pinecone's UI dashboard hid the 3072 option.
+**The FDE Pivot:** We bypassed the graphical interface entirely. We wrote a standalone **Infrastructure-as-Code (IaC)** script (`setup_db.py`) to connect directly to the Pinecone servers, purge the corrupted 768-dimension bucket, and forcefully provision a 3072-dimension server bucket.
+
+
+
+## 6. Phase V: The Final Evolution (Decoupled Architecture)
+**The Problem:** The `429 RESOURCE_EXHAUSTED` API limit. Because our script was "vertically integrated," every time we ran the app to ask a question, it needlessly re-embedded all the text chunks, instantly burning through the Google Free-Tier limit of 20 requests per minute before the user could even type a prompt.
+**The FDE Pivot:** We completely **decoupled** the architecture. We realized that once the vectors are stored in the Pinecone cloud, they are permanent. 
+* We removed all `TextLoader` and `from_documents` logic from the main application. 
+* The final `app.py` was transformed into a pure, lightweight "Retrieval Engine." It simply connects to the existing cloud database, skips the embedding phase entirely, and uses its API quota strictly for querying the Chat model (`gemini-2.5-flash`).
+
+## Summary for Interviews
+
+*"I built a cloud-native RAG pipeline, but the real engineering was in the deployment. I had to decouple the ingestion logic from the retrieval logic to optimize API rate limits, navigate severe dependency conflicts by hotwiring the LangChain community wrappers to the modern Pinecone SDK, and use Infrastructure-as-Code to provision the cloud vector database when the UI proved restrictive."*
